@@ -100,6 +100,23 @@ fi
 
 echo "🔐 Hardening SSH..."
 
+#############################
+# PRE-SSH SAFETY CHECK
+#############################
+
+echo "🔍 Checking for existing SSH keys..."
+
+if [ ! -f /home/$NEW_USER/.ssh/authorized_keys ]; then
+  echo "⚠️ WARNING: No SSH keys found for user $NEW_USER"
+  echo "👉 Add SSH key before disabling password login!"
+  echo ""
+  read -p "Do you want to continue anyway? (yes/no): " confirm
+  if [[ "$confirm" != "yes" ]]; then
+    echo "❌ Aborting to prevent lockout."
+    exit 1
+  fi
+fi
+
 SSH_CONFIG="/etc/ssh/sshd_config"
 
 cp $SSH_CONFIG ${SSH_CONFIG}.bak
