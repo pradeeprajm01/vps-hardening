@@ -93,45 +93,52 @@ else
     echo "$NEW_USER:$NEW_PASSWORD" | chpasswd
     usermod -aG sudo $NEW_USER
 fi
-
 #############################
-# 7. SSH HARDENING
-#############################
-
-echo "🔐 Hardening SSH..."
-
-#############################
-# PRE-SSH SAFETY CHECK
+# 7. SSH CONFIG (SAFE + CLEAN)
 #############################
 
-echo "🔍 Checking for existing SSH keys..."
-
-if [ ! -f /home/$NEW_USER/.ssh/authorized_keys ]; then
-  echo "⚠️ WARNING: No SSH keys found for user $NEW_USER"
-  echo "👉 Add SSH key before disabling password login!"
-  echo ""
-  read -p "Do you want to continue anyway? (yes/no): " confirm
-  if [[ "$confirm" != "yes" ]]; then
-    echo "❌ Aborting to prevent lockout."
-    exit 1
-  fi
-fi
+echo "🔐 Configuring SSH (Safe Mode)..."
 
 SSH_CONFIG="/etc/ssh/sshd_config"
 
+# Backup
 cp $SSH_CONFIG ${SSH_CONFIG}.bak
 
-sed -i "s/^#\?PermitRootLogin.*/PermitRootLogin no/" $SSH_CONFIG
-sed -i "s/^#\?PasswordAuthentication.*/PasswordAuthentication no/" $SSH_CONFIG
-sed -i "s/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/" $SSH_CONFIG
+# 🔥 Remove ALL override configs (critical fix)
+rm -f /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true
 
-if grep -q "^Port" $SSH_CONFIG; then
-    sed -i "s/^Port.*/Port $SSH_PORT/" $SSH_CONFIG
-else
-    echo "Port $SSH_PORT" >> $SSH_CONFIG
+# 🔥 Remove ALL existing Port lines (avoid duplicates)
+sed -i '/^Port/d' $SSH_CONFIG
+
+# 🔥 Apply clean config
+cat <<EOF >> $SSH_CONFIG
+
+# --- Custom SSH Config ---
+Port $SSH_PORT
+PermitRootLogin yes
+PasswordAuthentication yes
+PubkeyAuthentication yes
+EOF
+
+# Restart SSH safely
+systemctl restart ssh
+
+sleep 2
+
+# 🔥 Validate SSH is listening on expected port
+if ! ss -tulnp | grep -q ":$SSH_PORT"; then
+  echo "❌ ERROR: SSH not listening on port $SSH_PORT"
+  echo "🔁 Rolling back to port 22..."
+
+  sed -i '/^Port/d' $SSH_CONFIG
+  echo "Port 22" >> $SSH_CONFIG
+
+  systemctl restart ssh
+  exit 1
 fi
 
-systemctl restart ssh
+echo "✅ SSH is running on port $SSH_PORT"
+
 
 #############################
 # 8. FIREWALL (UFW)
