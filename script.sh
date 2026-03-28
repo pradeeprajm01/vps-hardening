@@ -2,36 +2,10 @@
 
 set -e
 
-echo "🚀 Starting Ubuntu Hardening..."
-
 echo "============================================================"
-echo "🔐 Ubuntu Hardening & Bootstrap Script"
+echo "🔐 Ubuntu Hardening & Bootstrap Script (Safe Edition)"
 echo "============================================================"
 echo ""
-echo "PURPOSE:"
-echo "  Automates baseline security hardening for Ubuntu VPS"
-echo ""
-echo "THIS SCRIPT WILL:"
-echo "  • Create a non-root sudo user"
-echo "  • Disable root & password-based SSH login"
-echo "  • Configure firewall (deny-by-default)"
-echo "  • Enable Fail2Ban (anti-brute-force)"
-echo "  • Install Docker (non-root ready)"
-echo "  • Apply kernel-level protections"
-echo ""
-echo "INPUT REQUIRED:"
-echo "  • Username"
-echo "  • Password (for sudo only)"
-echo "  • SSH Port"
-echo ""
-echo "⚠️ IMPORTANT:"
-echo "  • SSH password login will be DISABLED"
-echo "  • You MUST configure SSH key access"
-echo "  • Test login before closing this session"
-echo ""
-echo "============================================================"
-echo ""
-sleep 2
 
 #############################
 # 1. DEFAULTS
@@ -42,7 +16,7 @@ DEFAULT_PASSWORD="test"
 DEFAULT_SSH_PORT=2222
 
 #############################
-# 2. INTERACTIVE INPUT
+# 2. INPUT
 #############################
 
 echo "🔧 Configuration Setup (Press Enter to use defaults)"
@@ -65,24 +39,20 @@ if ! [[ "$SSH_PORT" =~ ^[0-9]+$ ]] || [ "$SSH_PORT" -lt 1 ] || [ "$SSH_PORT" -gt
     exit 1
 fi
 
-#############################
-# 4. PRE-CHECKS
-#############################
-
 if [ "$EUID" -ne 0 ]; then
   echo "❌ Please run as root"
   exit 1
 fi
 
 #############################
-# 5. UPDATE SYSTEM
+# 4. UPDATE SYSTEM
 #############################
 
 echo "📦 Updating system..."
 apt update && apt upgrade -y
 
 #############################
-# 6. CREATE USER
+# 5. CREATE USER
 #############################
 
 if id "$NEW_USER" &>/dev/null; then
@@ -93,24 +63,30 @@ else
     echo "$NEW_USER:$NEW_PASSWORD" | chpasswd
     usermod -aG sudo $NEW_USER
 fi
+
 #############################
-# 7. SSH CONFIG (SAFE + CLEAN)
+# 6. SSH CONFIG (SAFE)
 #############################
 
-echo "🔐 Configuring SSH (Safe Mode)..."
+echo "🔐 Configuring SSH safely..."
 
 SSH_CONFIG="/etc/ssh/sshd_config"
 
 # Backup
 cp $SSH_CONFIG ${SSH_CONFIG}.bak
 
-# 🔥 Remove ALL override configs (critical fix)
+# Remove override configs (CRITICAL)
 rm -f /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true
 
-# 🔥 Remove ALL existing Port lines (avoid duplicates)
+# Remove all existing Port entries
 sed -i '/^Port/d' $SSH_CONFIG
 
-# 🔥 Apply clean config
+# Remove conflicting auth lines
+sed -i '/^PasswordAuthentication/d' $SSH_CONFIG
+sed -i '/^PermitRootLogin/d' $SSH_CONFIG
+sed -i '/^PubkeyAuthentication/d' $SSH_CONFIG
+
+# Apply clean config
 cat <<EOF >> $SSH_CONFIG
 
 # --- Custom SSH Config ---
@@ -120,12 +96,11 @@ PasswordAuthentication yes
 PubkeyAuthentication yes
 EOF
 
-# Restart SSH safely
+# Restart SSH
 systemctl restart ssh
-
 sleep 2
 
-# 🔥 Validate SSH is listening on expected port
+# Validate SSH port
 if ! ss -tulnp | grep -q ":$SSH_PORT"; then
   echo "❌ ERROR: SSH not listening on port $SSH_PORT"
   echo "🔁 Rolling back to port 22..."
@@ -137,16 +112,15 @@ if ! ss -tulnp | grep -q ":$SSH_PORT"; then
   exit 1
 fi
 
-echo "✅ SSH is running on port $SSH_PORT"
-
+echo "✅ SSH running on port $SSH_PORT"
 
 #############################
-# 8. FIREWALL (UFW)
+# 7. FIREWALL
 #############################
 
 echo "🔥 Configuring firewall..."
 
-apt install ufw -y
+apt install -y ufw
 
 ufw --force reset
 ufw default deny incoming
@@ -159,12 +133,12 @@ ufw allow 443/tcp
 ufw --force enable
 
 #############################
-# 9. FAIL2BAN
+# 8. FAIL2BAN
 #############################
 
 echo "🛡️ Installing Fail2Ban..."
 
-apt install fail2ban -y
+apt install -y fail2ban
 
 cat <<EOF > /etc/fail2ban/jail.local
 [sshd]
@@ -179,15 +153,17 @@ systemctl enable fail2ban
 systemctl restart fail2ban
 
 #############################
-# 10. UTILITIES
+# 9. UTILITIES
 #############################
 
 echo "🧰 Installing utilities..."
 
-apt install -y htop iotop nethogs curl git unzip ca-certificates gnupg lsb-release
+apt install -y \
+  htop iotop nethogs curl git unzip \
+  ca-certificates gnupg lsb-release
 
 #############################
-# 11. DOCKER INSTALL
+# 10. DOCKER
 #############################
 
 echo "🐳 Installing Docker..."
@@ -216,7 +192,7 @@ systemctl enable docker
 systemctl start docker
 
 #############################
-# 12. SYSCTL HARDENING
+# 11. SYSCTL HARDENING
 #############################
 
 echo "⚙️ Applying kernel hardening..."
@@ -233,15 +209,7 @@ EOF
 sysctl -p
 
 #############################
-# 13. DISABLE UNUSED SERVICES
-#############################
-
-echo "🚫 Disabling unnecessary services..."
-
-systemctl disable avahi-daemon || true
-
-#############################
-# 14. CLEANUP
+# 12. CLEANUP
 #############################
 
 echo "🧹 Cleaning up..."
@@ -250,23 +218,21 @@ apt autoremove -y
 apt clean
 
 #############################
-# 15. FINAL OUTPUT
+# 13. FINAL OUTPUT
 #############################
 
 echo ""
-echo "✅ Hardening Complete!"
+echo "============================================================"
+echo "✅ HARDENING COMPLETE"
+echo "============================================================"
 echo ""
-echo "🔑 Access Details:"
+echo "🔑 ACCESS DETAILS:"
 echo "User: $NEW_USER"
 echo "Password: $NEW_PASSWORD"
 echo "SSH Port: $SSH_PORT"
 echo ""
-echo "⚠️ IMPORTANT:"
-echo "- Password SSH login is DISABLED"
-echo "- Use SSH key authentication"
-echo ""
-echo "👉 Next:"
-echo "ssh-copy-id -p $SSH_PORT $NEW_USER@SERVER_IP"
-echo ""
-echo "👉 Test before exit:"
+echo "👉 Connect using:"
+echo "ssh -p $SSH_PORT root@SERVER_IP"
 echo "ssh -p $SSH_PORT $NEW_USER@SERVER_IP"
+echo ""
+echo "============================================================"
