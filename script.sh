@@ -3,7 +3,7 @@
 set -e
 
 echo "============================================================"
-echo "🔐 Ubuntu Hardening & Bootstrap Script (Safe Edition)"
+echo "🚀 Ubuntu Bootstrap Script (Clean + Optional SSH Port)"
 echo "============================================================"
 echo ""
 
@@ -13,7 +13,7 @@ echo ""
 
 DEFAULT_USER="test"
 DEFAULT_PASSWORD="test"
-DEFAULT_SSH_PORT=2222
+DEFAULT_SSH_PORT=22
 
 #############################
 # 2. INPUT
@@ -29,6 +29,10 @@ NEW_PASSWORD=${NEW_PASSWORD:-$DEFAULT_PASSWORD}
 
 read -p "Enter SSH port [default: $DEFAULT_SSH_PORT]: " SSH_PORT
 SSH_PORT=${SSH_PORT:-$DEFAULT_SSH_PORT}
+
+# Git config input
+read -p "Enter Git username (leave empty to skip): " GIT_USER
+read -p "Enter Git email (leave empty to skip): " GIT_EMAIL
 
 #############################
 # 3. VALIDATION
@@ -65,36 +69,21 @@ else
 fi
 
 #############################
-# 6. SSH CONFIG (SAFE)
+# 6. SSH PORT CONFIG (MINIMAL)
 #############################
 
-echo "🔐 Configuring SSH safely..."
+echo "🔐 Configuring SSH port..."
 
 SSH_CONFIG="/etc/ssh/sshd_config"
 
 # Backup
 cp $SSH_CONFIG ${SSH_CONFIG}.bak
 
-# Remove override configs (CRITICAL)
-rm -f /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true
-
-# Remove all existing Port entries
+# Remove existing Port entries
 sed -i '/^Port/d' $SSH_CONFIG
 
-# Remove conflicting auth lines
-sed -i '/^PasswordAuthentication/d' $SSH_CONFIG
-sed -i '/^PermitRootLogin/d' $SSH_CONFIG
-sed -i '/^PubkeyAuthentication/d' $SSH_CONFIG
-
-# Apply clean config
-cat <<EOF >> $SSH_CONFIG
-
-# --- Custom SSH Config ---
-Port $SSH_PORT
-PermitRootLogin yes
-PasswordAuthentication yes
-PubkeyAuthentication yes
-EOF
+# Apply new port
+echo "Port $SSH_PORT" >> $SSH_CONFIG
 
 # Restart SSH
 systemctl restart ssh
@@ -115,7 +104,7 @@ fi
 echo "✅ SSH running on port $SSH_PORT"
 
 #############################
-# 7. FIREWALL
+# 7. FIREWALL (SAFE ORDER)
 #############################
 
 echo "🔥 Configuring firewall..."
@@ -126,6 +115,7 @@ ufw --force reset
 ufw default deny incoming
 ufw default allow outgoing
 
+# CRITICAL: Allow SSH BEFORE enabling firewall
 ufw allow $SSH_PORT/tcp
 ufw allow 80/tcp
 ufw allow 443/tcp
@@ -133,24 +123,27 @@ ufw allow 443/tcp
 ufw --force enable
 
 #############################
-# 8. FAIL2BAN
+# 8. GIT CONFIG (SAFE)
 #############################
 
-echo "🛡️ Installing Fail2Ban..."
+echo "🔧 Configuring Git (if provided)..."
 
-apt install -y fail2ban
+if [ -n "$GIT_USER" ] && [ -n "$GIT_EMAIL" ]; then
+    EXISTING_USER=$(git config --global user.name || true)
+    EXISTING_EMAIL=$(git config --global user.email || true)
 
-cat <<EOF > /etc/fail2ban/jail.local
-[sshd]
-enabled = true
-port = $SSH_PORT
-maxretry = 5
-bantime = 3600
-findtime = 600
-EOF
+    if [ "$EXISTING_USER" != "$GIT_USER" ]; then
+        git config --global user.name "$GIT_USER"
+    fi
 
-systemctl enable fail2ban
-systemctl restart fail2ban
+    if [ "$EXISTING_EMAIL" != "$GIT_EMAIL" ]; then
+        git config --global user.email "$GIT_EMAIL"
+    fi
+
+    echo "✅ Git configured"
+else
+    echo "ℹ️ Skipping Git config"
+fi
 
 #############################
 # 9. UTILITIES
@@ -192,16 +185,13 @@ systemctl enable docker
 systemctl start docker
 
 #############################
-# 11. SYSCTL HARDENING
+# 11. SYSCTL (LIGHT HARDENING)
 #############################
 
-echo "⚙️ Applying kernel hardening..."
+echo "⚙️ Applying kernel tuning..."
 
 cat <<EOF >> /etc/sysctl.conf
 
-net.ipv4.conf.all.rp_filter=1
-net.ipv4.conf.all.accept_redirects=0
-net.ipv4.conf.all.send_redirects=0
 net.ipv4.tcp_syncookies=1
 
 EOF
@@ -223,7 +213,7 @@ apt clean
 
 echo ""
 echo "============================================================"
-echo "✅ HARDENING COMPLETE"
+echo "✅ SETUP COMPLETE"
 echo "============================================================"
 echo ""
 echo "🔑 ACCESS DETAILS:"
@@ -232,7 +222,6 @@ echo "Password: $NEW_PASSWORD"
 echo "SSH Port: $SSH_PORT"
 echo ""
 echo "👉 Connect using:"
-echo "ssh -p $SSH_PORT root@SERVER_IP"
 echo "ssh -p $SSH_PORT $NEW_USER@SERVER_IP"
 echo ""
 echo "============================================================"
